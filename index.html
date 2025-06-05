@@ -1,0 +1,363 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Volumetric Deep Space Black Hole</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.136.0/build/three.module.js';
+        import { OrbitControls } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/controls/OrbitControls.js';
+        import { EffectComposer } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+        import { ShaderPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/ShaderPass.js';
+        import { GUI } from 'https://cdn.skypack.dev/dat.gui';
+
+        let scene, camera, renderer, composer, bloomPass, scanLinePass, grainPass;
+        let blackHoleMesh, accretionDiskParticles, eventHorizonMesh, backgroundStars;
+        let nebulaGroup, galaxyGroup; // Groups for particle-based nebulae and galaxies
+        let controls;
+        let gui;
+
+        const clock = new THREE.Clock();
+
+        const initialParams = {
+            blackHoleSize: 0.5,
+            particleCount: 7000, particleBaseColor: 0xffaa33, particleSpeed: 0.003,
+            particleDiskOuterRadius: 7, particleDiskInnerRadius: 0.7, particleDiskThickness: 0.25,
+            particleSpiralFactor: 1.8, particleSize: 0.08,
+            eventHorizonColor: 0xffffee, eventHorizonRadiusFactor: 1.05, eventHorizonTubeThickness: 0.015,
+            bgStarCount: 6000, bgStarRadius: 300, bgStarSize: 0.06, // Adjusted radius
+            // Particle Nebulae & Galaxies
+            numNebulae: 5,
+            nebulaParticlesPerCloud: 2500,
+            nebulaBaseColor1: 0xff4020, // Reddish
+            nebulaBaseColor2: 0x4060ff, // Bluish
+            nebulaCloudRadius: 30,    // Average size of a nebula cloud
+            nebulaParticleSize: 0.8,   // Larger, diffuse particles
+            nebulaOpacity: 0.15,        // Base opacity for nebula material
+
+            numGalaxies: 10,
+            galaxyParticlesPerCloud: 1500,
+            galaxyBaseColor: 0xffffdd, // Pale yellow for distant galaxy cores
+            galaxyCloudRadius: 15,     // Smaller than nebulae
+            galaxyParticleSize: 0.3,   // Smaller, more concentrated particles
+            galaxyOpacity: 0.2,
+
+            bloomStrength: 1.6, bloomRadius: 0.5, bloomThreshold: 0.05, 
+            scanLineColor: 0x222277, scanLineOpacity: 0.015, scanLineHeight: 6.0,
+            grainAmount: 0.005
+        };
+        let params = JSON.parse(JSON.stringify(initialParams));
+        const particlesData = []; // For accretion disk
+
+        // --- SPRITE TEXTURES ---
+        function createAccretionParticleSprite() { /* ... (same as previous) ... */ 
+            const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(32,32,0, 32,32,32);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)'); gradient.addColorStop(0.2, 'rgba(255,255,220,0.9)');
+            gradient.addColorStop(0.5, 'rgba(255,220,180,0.5)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            context.fillStyle = gradient; context.fillRect(0,0,64,64);
+            return new THREE.CanvasTexture(canvas);
+        }
+        const accretionParticleSprite = createAccretionParticleSprite();
+
+        function createNebulaGalaxySprite(isGalaxyCore = false) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128;
+            const context = canvas.getContext('2d');
+            const centerX = 64, centerY = 64, radius = 64;
+            const gradient = context.createRadialGradient(centerX,centerY,0, centerX,centerY,radius);
+            if (isGalaxyCore) { // For galaxy particles - smaller, brighter center
+                gradient.addColorStop(0, 'rgba(255,255,255,0.3)');
+                gradient.addColorStop(0.1, 'rgba(255,255,255,0.1)');
+                gradient.addColorStop(0.5, 'rgba(255,255,255,0.02)');
+                gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            } else { // For nebula particles - very diffuse
+                gradient.addColorStop(0, 'rgba(255,255,255,0.1)'); // Very faint core
+                gradient.addColorStop(0.2, 'rgba(255,255,255,0.05)');
+                gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            }
+            context.fillStyle = gradient; context.fillRect(0,0,128,128);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+        const nebulaParticleTexture = createNebulaGalaxySprite(false);
+        const galaxyParticleTexture = createNebulaGalaxySprite(true);
+
+        // --- PARTICLE CLOUD GENERATION ---
+        function createParticleCloud(config) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = []; const colors = [];
+            const baseColor = new THREE.Color();
+
+            for (let i = 0; i < config.count; i++) {
+                let x, y, z, d;
+                // Spherical distribution, denser towards center using Math.pow
+                const rScale = Math.pow(Math.random(), 1.5); 
+                do { x = Math.random()*2-1; y = Math.random()*2-1; z = Math.random()*2-1; d = x*x+y*y+z*z; } while (d > 1);
+                
+                let posX = config.center.x + x * config.radius * rScale;
+                let posY = config.center.y + y * config.radius * rScale;
+                let posZ = config.center.z + z * config.radius * rScale;
+
+                if (config.type === 'galaxy') { // Flatten galaxies
+                    posY = config.center.y + y * config.radius * rScale * 0.2; // Much flatter
+                     // Rotate galaxy plane randomly
+                    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random()*Math.PI,Math.random()*Math.PI,Math.random()*Math.PI));
+                    const p = new THREE.Vector3(posX - config.center.x, posY - config.center.y, posZ - config.center.z).applyQuaternion(q);
+                    posX = config.center.x + p.x;
+                    posY = config.center.y + p.y;
+                    posZ = config.center.z + p.z;
+                }
+                
+                positions.push(posX, posY, posZ);
+                baseColor.set(config.baseColor);
+                baseColor.offsetHSL((Math.random()-0.5)*0.4, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.4);
+                colors.push(baseColor.r, baseColor.g, baseColor.b);
+            }
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors,3));
+            const material = new THREE.PointsMaterial({
+                map: config.spriteTexture, size: config.particleSize, vertexColors: true,
+                blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+                sizeAttenuation: true, opacity: config.opacity });
+            return new THREE.Points(geometry, material);
+        }
+
+        function populateNebulaeAndGalaxies() {
+            if (nebulaGroup) scene.remove(nebulaGroup);
+            nebulaGroup = new THREE.Group();
+            for (let i = 0; i < params.numNebulae; i++) {
+                const nebulaCenter = new THREE.Vector3(
+                    (Math.random() - 0.5) * params.bgStarRadius * 1.2,
+                    (Math.random() - 0.5) * params.bgStarRadius * 0.8,
+                    (Math.random() - 0.5) * params.bgStarRadius * 1.2
+                ).normalize().multiplyScalar(params.bgStarRadius * (0.3 + Math.random() * 0.4));
+                
+                const nebula = createParticleCloud({
+                    type: 'nebula', center: nebulaCenter,
+                    count: params.nebulaParticlesPerCloud,
+                    baseColor: Math.random() > 0.5 ? params.nebulaBaseColor1 : params.nebulaBaseColor2,
+                    radius: params.nebulaCloudRadius * (0.7 + Math.random() * 0.6),
+                    particleSize: params.nebulaParticleSize * (0.7 + Math.random() * 0.6),
+                    spriteTexture: nebulaParticleTexture,
+                    opacity: params.nebulaOpacity * (0.6 + Math.random() * 0.4)
+                });
+                nebulaGroup.add(nebula);
+            }
+            scene.add(nebulaGroup);
+
+            if (galaxyGroup) scene.remove(galaxyGroup);
+            galaxyGroup = new THREE.Group();
+            for (let i = 0; i < params.numGalaxies; i++) {
+                const galaxyCenter = new THREE.Vector3(
+                    (Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5)
+                ).normalize().multiplyScalar(params.bgStarRadius * (0.5 + Math.random() * 0.45)); // Further out
+
+                const galaxy = createParticleCloud({
+                    type: 'galaxy', center: galaxyCenter,
+                    count: params.galaxyParticlesPerCloud,
+                    baseColor: params.galaxyBaseColor,
+                    radius: params.galaxyCloudRadius * (0.7 + Math.random() * 0.6),
+                    particleSize: params.galaxyParticleSize * (0.7 + Math.random() * 0.6),
+                    spriteTexture: galaxyParticleTexture,
+                    opacity: params.galaxyOpacity * (0.6 + Math.random() * 0.4)
+                });
+                galaxyGroup.add(galaxy);
+            }
+            scene.add(galaxyGroup);
+        }
+
+
+        function resetSimulation() { /* ... (ensure it calls populateNebulaeAndGalaxies if they need full reset) ... */ 
+            params = JSON.parse(JSON.stringify(initialParams));
+            camera.position.set(0,3,10); controls.target.set(0,0,0); controls.update();
+            updateEventHorizon();
+            const newParticleColor = new THREE.Color(params.particleBaseColor);
+            const colorsAttribute = accretionDiskParticles.geometry.attributes.color;
+            for(let i=0; i<params.particleCount; ++i) newParticleColor.toArray(colorsAttribute.array, i*3);
+            colorsAttribute.needsUpdate = true;
+            accretionDiskParticles.material.size = params.particleSize;
+            accretionDiskParticles.material.map = accretionParticleSprite; // Use correct sprite
+            initializeAccretionDiskParticlePositions();
+            accretionDiskParticles.geometry.attributes.position.needsUpdate = true;
+            
+            populateNebulaeAndGalaxies(); // Re-create nebulae and galaxies on reset
+
+            scanLinePass.uniforms.lineColor.value.set(params.scanLineColor);
+            scanLinePass.uniforms.opacity.value = params.scanLineOpacity;
+            scanLinePass.uniforms.lineHeight.value = params.scanLineHeight;
+            grainPass.uniforms.amount.value = params.grainAmount;
+            bloomPass.strength = params.bloomStrength; bloomPass.radius = params.bloomRadius; bloomPass.threshold = params.bloomThreshold;
+            if(gui){ gui.destroy(); setupGUI(); } console.log("Simulation Reset");
+        }
+        function updateEventHorizon() { /* ... (same as previous) ... */
+            if(eventHorizonMesh) scene.remove(eventHorizonMesh);
+            const ehRadius = initialParams.blackHoleSize * params.eventHorizonRadiusFactor;
+            const eventHorizonGeo = new THREE.TorusGeometry(ehRadius, params.eventHorizonTubeThickness,16,100);
+            const eventHorizonMat = new THREE.MeshBasicMaterial({color:new THREE.Color(params.eventHorizonColor), side:THREE.DoubleSide});
+            eventHorizonMesh = new THREE.Mesh(eventHorizonGeo, eventHorizonMat);
+            eventHorizonMesh.rotation.x = Math.PI/2; scene.add(eventHorizonMesh);
+        }
+        function initializeAccretionDiskParticlePositions() { /* ... (same as previous) ... */ 
+            particlesData.length=0; const positions=accretionDiskParticles.geometry.attributes.position.array;
+            const colors=accretionDiskParticles.geometry.attributes.color.array; const baseColor=new THREE.Color(params.particleBaseColor);
+            for(let i=0; i<params.particleCount; ++i){ const i3=i*3; const angle=Math.random()*Math.PI*2;
+            const r=params.particleDiskInnerRadius+Math.pow(Math.random(),1.5)*(params.particleDiskOuterRadius-params.particleDiskInnerRadius);
+            const posX=r*Math.cos(angle); const posY=r*Math.sin(angle); const posZ=(Math.random()-0.5)*params.particleDiskThickness;
+            positions[i3]=posX; positions[i3+1]=posY; positions[i3+2]=posZ;
+            let pColor=baseColor.clone().offsetHSL(0,(Math.random()-0.5)*0.1,(Math.random()-0.5)*0.1);
+            colors[i3]=pColor.r; colors[i3+1]=pColor.g; colors[i3+2]=pColor.b;
+            particlesData.push({position:new THREE.Vector3(posX,posY,posZ),velocity:new THREE.Vector3(-posY,posX,(Math.random()-0.5)*0.1).normalize().multiplyScalar(0.1+Math.random()*0.2),initialRadius:r});
+            }
+        }
+        function createBackgroundStars() { /* ... (same as previous) ... */
+            const starGeometry = new THREE.BufferGeometry(); const starPositions = []; const starColors = [];
+            const starColor = new THREE.Color();
+            for (let i = 0; i < params.bgStarCount; i++) {
+                const vertex = new THREE.Vector3(); vertex.set(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1).normalize();
+                vertex.multiplyScalar(params.bgStarRadius * (0.7 + Math.random() * 0.3)); 
+                starPositions.push(vertex.x, vertex.y, vertex.z);
+                const rand = Math.random();
+                if (rand > 0.95) starColor.setHSL(0.55+(Math.random()-0.5)*0.2,0.9,0.7+Math.random()*0.2); 
+                else if (rand > 0.85) starColor.setHSL(0.1+(Math.random()-0.5)*0.1,1.0,0.8+Math.random()*0.15);
+                else if (rand > 0.75) starColor.setHSL(0.0+(Math.random()-0.5)*0.1,0.8,0.7+Math.random()*0.2); 
+                else starColor.setHSL(Math.random()*0.1,Math.random()*0.2,0.85+Math.random()*0.15); 
+                starColors.push(starColor.r, starColor.g, starColor.b);
+            }
+            starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions,3));
+            starGeometry.setAttribute('color', new THREE.Float32BufferAttribute(starColors,3));
+            const starMaterial = new THREE.PointsMaterial({size:params.bgStarSize, vertexColors:true, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false, sizeAttenuation:true});
+            backgroundStars = new THREE.Points(starGeometry, starMaterial); scene.add(backgroundStars);
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, params.bgStarRadius*1.8 + params.nebulaCloudRadius); 
+            camera.position.set(0,3,10);
+
+            renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(window.innerWidth,window.innerHeight); renderer.setPixelRatio(window.devicePixelRatio); document.body.appendChild(renderer.domElement);
+            
+            const bhGeo = new THREE.SphereGeometry(initialParams.blackHoleSize,64,64); const bhMat = new THREE.MeshBasicMaterial({color:0x000000}); blackHoleMesh = new THREE.Mesh(bhGeo, bhMat); scene.add(blackHoleMesh);
+            
+            updateEventHorizon();
+            createBackgroundStars(); 
+            populateNebulaeAndGalaxies(); // Create particle-based nebulae and galaxies
+
+            const adGeo = new THREE.BufferGeometry(); adGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(initialParams.particleCount*3),3)); adGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(initialParams.particleCount*3),3));
+            const adMat = new THREE.PointsMaterial({size:params.particleSize, map:accretionParticleSprite, vertexColors:true, blending:THREE.AdditiveBlending, transparent:true, depthWrite:false, sizeAttenuation:true});
+            accretionDiskParticles = new THREE.Points(adGeo, adMat); scene.add(accretionDiskParticles);
+            initializeAccretionDiskParticlePositions(); accretionDiskParticles.geometry.attributes.position.needsUpdate=true; accretionDiskParticles.geometry.attributes.color.needsUpdate=true;
+            
+            controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.05; controls.minDistance=1; controls.maxDistance=150; controls.target.set(0,0,0); // Increased maxDistance
+            
+            composer = new EffectComposer(renderer); composer.addPass(new RenderPass(scene, camera));
+            const slsd = {uniforms:{"tDiffuse":{value:null},"time":{value:0.0},"lineHeight":{value:params.scanLineHeight},"lineSpacing":{value:2.0},"opacity":{value:params.scanLineOpacity},"lineColor":{value:new THREE.Color(params.scanLineColor)}},vertexShader:`varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,fragmentShader:` uniform sampler2D tDiffuse; uniform float time; uniform float lineHeight; uniform float lineSpacing; uniform float opacity; uniform vec3 lineColor; varying vec2 vUv; void main() { vec4 color = texture2D(tDiffuse, vUv); float scanlineEffect = step(lineSpacing, mod(gl_FragCoord.y + time * 5.0, lineHeight)) * opacity; color.rgb += scanlineEffect * lineColor; gl_FragColor = color; }`};
+            scanLinePass = new ShaderPass(slsd); composer.addPass(scanLinePass);
+            bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth,window.innerHeight),params.bloomStrength,params.bloomRadius,params.bloomThreshold); composer.addPass(bloomPass);
+            const gsd = {uniforms:{"tDiffuse":{value:null},"time":{value:0.0},"amount":{value:params.grainAmount}},vertexShader:`varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,fragmentShader:` uniform sampler2D tDiffuse; uniform float time; uniform float amount; varying vec2 vUv; float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123 + time); } void main() { vec4 color = texture2D(tDiffuse, vUv); float grain = random(vUv) * 2.0 - 1.0;  color.rgb += grain * amount; gl_FragColor = color; }`};
+            grainPass = new ShaderPass(gsd); composer.addPass(grainPass);
+
+            setupGUI();
+            window.addEventListener('resize', ()=>{camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth,window.innerHeight); composer.setSize(window.innerWidth,window.innerHeight); camera.far=params.bgStarRadius*1.8 + params.nebulaCloudRadius;});
+        }
+
+        function setupGUI() {
+            gui = new GUI({width:'100%', closeOnTop:true, closed:true});
+            gui.domElement.querySelector('.close-button').innerHTML = 'Open Controls';
+            gui.add({reset:resetSimulation},'reset').name('Reset Simulation');
+
+            const bhFolder = gui.addFolder('Black Hole & Event Horizon'); /* ... */
+            bhFolder.addColor(params,'eventHorizonColor').name('EH Color').onChange(v=>eventHorizonMesh.material.color.set(v));
+            bhFolder.add(params,'eventHorizonRadiusFactor',1.01,1.5).name('EH Radius').onChange(updateEventHorizon);
+            bhFolder.add(params,'eventHorizonTubeThickness',0.005,0.1).name('EH Thickness').onChange(updateEventHorizon);
+
+            const adFolder = gui.addFolder('Accretion Disk'); /* ... */
+            adFolder.addColor(params,'particleBaseColor').name('Base Color').onChange(v=>{const c=new THREE.Color(v); const ca=accretionDiskParticles.geometry.attributes.color; for(let i=0;i<params.particleCount;++i){let pc=c.clone().offsetHSL(0,(Math.random()-0.5)*0.1,(Math.random()-0.5)*0.1); ca.array[i*3]=pc.r;ca.array[i*3+1]=pc.g;ca.array[i*3+2]=pc.b;} ca.needsUpdate=true;});
+            adFolder.add(params,'particleSpeed',0.0005,0.02).name('Speed');
+            adFolder.add(params,'particleDiskOuterRadius',2,15).name('Outer Radius');
+            adFolder.add(params,'particleDiskInnerRadius',0.6,5).name('Inner Radius');
+            adFolder.add(params,'particleDiskThickness',0.05,1.0).name('Thickness');
+            adFolder.add(params,'particleSpiralFactor',0.1,3.0).name('Spiral/Orbital');
+            adFolder.add(params,'particleSize',0.01,0.2).name('Size').onChange(v=>accretionDiskParticles.material.size=v);
+
+            const bgFolder = gui.addFolder('Background Elements');
+            bgFolder.add(params,'bgStarSize',0.01,0.2).name('Star Size').onChange(v=>backgroundStars.material.size=v);
+            bgFolder.add(backgroundStars.material,'opacity',0,1).name('Star Opacity');
+            
+            const nebulaFolder = bgFolder.addFolder('Nebulae (Particle Clouds)');
+            nebulaFolder.add(params, 'numNebulae', 0, 20, 1).name('Number').onFinishChange(populateNebulaeAndGalaxies);
+            nebulaFolder.add(params, 'nebulaParticlesPerCloud', 500, 5000, 100).name('Particles/Cloud').onFinishChange(populateNebulaeAndGalaxies);
+            nebulaFolder.add(params, 'nebulaCloudRadius', 10, 100, 1).name('Avg. Radius').onFinishChange(populateNebulaeAndGalaxies);
+            nebulaFolder.add(params, 'nebulaParticleSize', 0.1, 2.0).name('Particle Size').onFinishChange(populateNebulaeAndGalaxies);
+            nebulaFolder.add(params, 'nebulaOpacity', 0.01, 0.5).name('Base Opacity').onFinishChange(populateNebulaeAndGalaxies);
+            nebulaFolder.addColor(params, 'nebulaBaseColor1').name('Color 1').onFinishChange(populateNebulaeAndGalaxies);
+            nebulaFolder.addColor(params, 'nebulaBaseColor2').name('Color 2').onFinishChange(populateNebulaeAndGalaxies);
+            
+            const galaxyFolder = bgFolder.addFolder('Galaxies (Particle Clouds)');
+            galaxyFolder.add(params, 'numGalaxies', 0, 30, 1).name('Number').onFinishChange(populateNebulaeAndGalaxies);
+            galaxyFolder.add(params, 'galaxyParticlesPerCloud', 500, 3000, 100).name('Particles/Cloud').onFinishChange(populateNebulaeAndGalaxies);
+            galaxyFolder.add(params, 'galaxyCloudRadius', 5, 50, 1).name('Avg. Radius').onFinishChange(populateNebulaeAndGalaxies);
+            galaxyFolder.add(params, 'galaxyParticleSize', 0.1, 1.0).name('Particle Size').onFinishChange(populateNebulaeAndGalaxies);
+            galaxyFolder.add(params, 'galaxyOpacity', 0.05, 0.7).name('Base Opacity').onFinishChange(populateNebulaeAndGalaxies);
+            galaxyFolder.addColor(params, 'galaxyBaseColor').name('Base Color').onFinishChange(populateNebulaeAndGalaxies);
+
+
+            const fxFolder = gui.addFolder('Effects'); /* ... */
+            const bloomF = fxFolder.addFolder('Bloom'); bloomF.add(params,'bloomStrength',0,5).name('Strength').onChange(v=>bloomPass.strength=v); bloomF.add(params,'bloomRadius',0,2).name('Radius').onChange(v=>bloomPass.radius=v); bloomF.add(params,'bloomThreshold',0,1).name('Threshold').onChange(v=>bloomPass.threshold=v);
+            const scanF = fxFolder.addFolder('Scanlines'); scanF.add(params,'scanLineOpacity',0,0.2).name('Opacity').onChange(v=>scanLinePass.uniforms.opacity.value=v); scanF.add(params,'scanLineHeight',1,20).name('Height').onChange(v=>scanLinePass.uniforms.lineHeight.value=v); scanF.addColor(params,'scanLineColor').name('Color').onChange(v=>scanLinePass.uniforms.lineColor.value.set(v));
+            const grainF = fxFolder.addFolder('Grain'); grainF.add(params,'grainAmount',0,0.1).name('Amount').onChange(v=>grainPass.uniforms.amount.value=v);
+        }
+
+        function animate() { /* ... (same as previous, background particle clouds are static) ... */
+            requestAnimationFrame(animate); const elapsedTime=clock.getElapsedTime();
+            const positionsAttribute=accretionDiskParticles.geometry.attributes.position;
+            const eventHorizonActualRadius=initialParams.blackHoleSize*params.eventHorizonRadiusFactor;
+            const disappearRadiusSq=(eventHorizonActualRadius*0.9)**2;
+            for(let i=0; i<params.particleCount; ++i){let pData=particlesData[i];let currentPos=pData.position;
+            let directionToCenter=currentPos.clone().multiplyScalar(-1);const distSq=currentPos.lengthSq();directionToCenter.normalize();
+            let tangent=new THREE.Vector3(-currentPos.y,currentPos.x,0).normalize();
+            let inwardFactor=(1.0-Math.min(1.0,params.particleSpiralFactor*0.1))*0.2;
+            let spiralFactorEffective=params.particleSpiralFactor*0.8;
+            let inwardMotion=directionToCenter.clone().multiplyScalar(inwardFactor);
+            let spiralMotion=tangent.multiplyScalar(spiralFactorEffective);
+            let finalDirection=new THREE.Vector3().addVectors(inwardMotion,spiralMotion).normalize();
+            const speed=params.particleSpeed*(1+20/(distSq+1.0));currentPos.add(finalDirection.multiplyScalar(speed));
+            positionsAttribute.array[i*3]=currentPos.x;positionsAttribute.array[i*3+1]=currentPos.y;positionsAttribute.array[i*3+2]=currentPos.z;
+            const currentOuterBound=params.particleDiskOuterRadius;
+            if(distSq<disappearRadiusSq||currentPos.length()>currentOuterBound+2){const angle=Math.random()*Math.PI*2;
+            const r=params.particleDiskInnerRadius+Math.pow(Math.random(),1.5)*(params.particleDiskOuterRadius-params.particleDiskInnerRadius);
+            currentPos.set(r*Math.cos(angle),r*Math.sin(angle),(Math.random()-0.5)*params.particleDiskThickness);
+            pData.initialRadius=r;pData.velocity.set(-currentPos.y,currentPos.x,(Math.random()-0.5)*0.1).normalize().multiplyScalar(0.1+Math.random()*0.2);}}
+            positionsAttribute.needsUpdate=true;
+            if(backgroundStars){backgroundStars.rotation.y+=0.00003;backgroundStars.rotation.x+=0.00001;}
+            // Nebula and Galaxy groups are static. If slow rotation is desired:
+            // if(nebulaGroup) nebulaGroup.rotation.y += 0.00001;
+            // if(galaxyGroup) galaxyGroup.rotation.y += 0.000005;
+            scanLinePass.uniforms.time.value=elapsedTime; grainPass.uniforms.time.value=elapsedTime;
+            controls.update(); composer.render();
+        }
+
+        init(); animate();
+        document.addEventListener('DOMContentLoaded', () => { /* ... (same as previous) ... */
+            const titleContainer=document.createElement('div'); titleContainer.style.cssText="position:absolute;top:20px;left:30px;color:#fff;font-family:arial,sans-serif;text-shadow:0 0 5px #00eaff;";
+            const title1=document.createElement('h3'); title1.textContent='Volumetric Deep Space Black Hole'; title1.style.cssText="margin:0 0 5px 0;font-size:1rem;";
+            const title2=document.createElement('h3'); title2.textContent='Particle Nebulae & Galaxies'; title2.style.cssText="margin:0;font-size:0.8rem;";
+            titleContainer.appendChild(title1); titleContainer.appendChild(title2); document.body.appendChild(titleContainer);
+            const bottomTextContainer=document.createElement('div'); bottomTextContainer.style.cssText="position:absolute;bottom:20px;left:50%;transform:translateX(-50%);color:#aaa;font-family:arial,sans-serif;font-size:0.75rem;text-align:center;width:80%;";
+            const userHint=document.createElement('p'); userHint.textContent="Experiment with the controls to customize your view of the cosmos!"; userHint.style.margin='0 0 5px 0';
+            bottomTextContainer.appendChild(userHint); document.body.appendChild(bottomTextContainer);
+            const fsButtonContainer=document.createElement('div'); fsButtonContainer.style.cssText="position:absolute;bottom:20px;right:30px;";
+            const fsButton=document.createElement('h3'); fsButton.textContent='fullscreen on'; fsButton.style.cssText="color:#fff;font-family:arial,sans-serif;font-size:.8rem;text-shadow:0 0 5px #00eaff;cursor:pointer;margin:0;";
+            fsButtonContainer.appendChild(fsButton); document.body.appendChild(fsButtonContainer);
+            fsButton.addEventListener('click', ()=>{if(!document.fullscreenElement){document.documentElement.requestFullscreen().catch(err=>console.error(err)); fsButton.textContent='fullscreen off';}else if(document.exitFullscreen){document.exitFullscreen(); fsButton.textContent='fullscreen on';}});
+        });
+    </script></body></html>
