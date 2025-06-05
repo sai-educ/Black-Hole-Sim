@@ -1,6 +1,11 @@
 # Interactive 3D Black Hole Simulation 🌌
 
+![Screen Recording 2025-06-04 at 11 54 43 PM](https://github.com/user-attachments/assets/0f8bc6c0-e884-4524-824d-1997e4532f7d)
+
+
 Welcome to the Interactive 3D Black Hole Simulation! This project leverages the power of Three.js to create a visually engaging and highly customizable representation of a black hole, complete with a dynamic accretion disk, a glowing event horizon, and an immersive deep-space background.
+
+Go here: [https://black-hole-sim-theta.vercel.app/](https://black-hole-sim-theta.vercel.app/) 
 
 ## ✨ Key Features
 
@@ -29,8 +34,8 @@ Welcome to the Interactive 3D Black Hole Simulation! This project leverages the 
 
 This project is designed for easy access and direct interaction in your browser.
 
-* **Live Demo (thanks to Vercel):**
-    * **Go here: to be updated
+* **Live (thanks to Vercel for the compute):**
+    * **Go here: [https://black-hole-sim-theta.vercel.app/](https://black-hole-sim-theta.vercel.app/) 
 
 * **Running Locally (for Development/Modification):**
     **Clone the Repository (or Download the Files):**
