@@ -7,10 +7,29 @@ Welcome to the Interactive 3D Black Hole Simulation! This project leverages the 
 
 Go here: [https://black-hole-sim-theta.vercel.app/](https://black-hole-sim-theta.vercel.app/) 
 
+## ⚠️ What This Is (and Isn't)
+
+This is an **artistic, particle-based visualization, not a physically accurate simulation.** There is no general-relativistic ray tracing, no spacetime metric, and no gravitational lensing.
+
+What you are seeing is best read as:
+
+* **Light particles (photons) from a hot accretion disk.** Each glowing point is a stand-in for light emitted by superheated gas and dust orbiting and spiralling toward the black hole. The soft, bloomed sprites are meant to evoke emitted light, not individual physical objects.
+* **A stylized event horizon.** The black sphere and glowing torus mark where a black hole's point of no return would be. The torus loosely evokes the bright photon ring, but it is a decorative ring, not computed from the physics.
+* **An illustrative cosmic backdrop.** The stars, nebulae and galaxies are randomly generated particle clouds for depth and scale, not real star maps.
+
+What is simplified or missing:
+
+* Particles follow a simple inward-spiral rule, not true orbital (Keplerian or relativistic) dynamics.
+* Light does not bend around the hole, so there is no Einstein-ring or "disk wrapping over the top" effect seen in scientific renderings.
+* There is no Doppler beaming, gravitational redshift, or physically derived temperature gradient. Colors are chosen for aesthetics.
+* Scale and distances are arbitrary.
+
+Use it as an interactive visual and educational aid for exploring the look and feel of a black hole, not as a source of quantitative or scientifically precise results.
+
 ## ✨ Key Features
 
 * **Interactive Black Hole:** A central, visually prominent black hole entity.
-* **Dynamic Accretion Disk:** Simulated using an intricate particle system. You can customize its colors, particle speed, and overall shape as particles spiral inwards.
+* **Dynamic Accretion Disk:** Represented by a stylized system of light particles (not a physical simulation). You can customize its colors, particle speed, and overall shape as particles spiral inwards.
 * **Glowing Event Horizon:** A distinct torus shape vividly visualizes the critical boundary around the black hole's point of no return.
 * **Immersive Deep Space Background:**
     * **Distant Starfield:** A particle system generates a vast expanse of distant stars.
@@ -45,7 +64,7 @@ This project is designed for easy access and direct interaction in your browser.
 The entire simulation is encapsulated within a single `index.html` file. This strategic choice makes it highly portable and easy to understand. The file includes:
 * The HTML document structure.
 * Embedded CSS for styling the page elements.
-* All JavaScript code, which utilizes ES6 modules to import Three.js and dat.GUI directly from Content Delivery Networks (CDNs).
+* All JavaScript code, which utilizes ES6 modules to import Three.js and dat.GUI directly from the jsDelivr CDN via an import map (version-pinned).
 
 ## 🎓 Educational Aspects & Key Concepts
 
